@@ -9,7 +9,7 @@ Parameters:
 
   WebServerAMI:
     Type: String
-    Default: 'XXXXXXXXXXXXXXXXX'
+    Default: 'ami-03c142431d1b42776'
     Description: 'AMI ID for Public Web Server (with application baked in)'
 
   DifyAPIKey:
