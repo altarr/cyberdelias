@@ -324,6 +324,9 @@ Resources:
           DIFY_API_URL=http://10.0.2.10/v1
           EOF
 
+          # Allow Node.js to bind to privileged ports (port 80)
+          setcap cap_net_bind_service=+ep $(which node)
+
           # Start the application
           cd /opt/cyberdelias
           sudo -u ubuntu pm2 start server.js --name cyberdelias
