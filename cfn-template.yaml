@@ -1,0 +1,369 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CTF Infrastructure - Dify Server (Private) and Public Web Server'
+
+Parameters:
+  DifyAMI:
+    Type: String
+    Default: 'ami-082d5af937031e7b1'
+    Description: 'AMI ID for Dify Server'
+
+  WebServerAMI:
+    Type: String
+    Default: 'XXXXXXXXXXXXXXXXX'
+    Description: 'AMI ID for Public Web Server (with application baked in)'
+
+  DifyAPIKey:
+    Type: String
+    Default: 'app-Z3TEMkZSNuUjvltxnIgfhC2l'
+    Description: 'Dify API Key'
+    NoEcho: true
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: 'EC2 Key Pair for SSH access'
+
+  SSHLocation:
+    Type: String
+    Default: '0.0.0.0/0'
+    Description: 'IP address range that can SSH to the instances'
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+
+  InstanceType:
+    Type: String
+    Default: 't3.large'
+    Description: 'EC2 instance type'
+    AllowedValues:
+      - t3.medium
+      - t3.large
+      - t3.xlarge
+      - t3.2xlarge
+
+Resources:
+  # VPC
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: CTF-VPC
+
+  # Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: CTF-IGW
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Public Subnet
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: CTF-Public-Subnet
+
+  # Private Subnet
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: CTF-Private-Subnet
+
+  # Public Route Table
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: CTF-Public-RT
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  # NAT Gateway (for Dify to access internet if needed)
+  NATGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: CTF-NAT-EIP
+
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NATGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet
+      Tags:
+        - Key: Name
+          Value: CTF-NAT-Gateway
+
+  # Private Route Table
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: CTF-Private-RT
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Security Group for Public Web Server
+  WebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: CTF-WebServer-SG
+      GroupDescription: Security group for public web server
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHLocation
+          Description: SSH access
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP access
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS access
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: CTF-WebServer-SG
+
+  # Security Group for Dify Server
+  DifySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: CTF-Dify-SG
+      GroupDescription: Security group for Dify server (private)
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 10.0.0.0/16
+          Description: SSH from within VPC
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref WebServerSecurityGroup
+          Description: HTTP from Web Server
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref WebServerSecurityGroup
+          Description: HTTPS from Web Server
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: CTF-Dify-SG
+
+  # Elastic IP for Web Server
+  WebServerEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref WebServerInstance
+      Tags:
+        - Key: Name
+          Value: CTF-WebServer-EIP
+
+  # Network Interface for Dify (to assign static private IP)
+  DifyNetworkInterface:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      PrivateIpAddress: 10.0.2.10
+      GroupSet:
+        - !Ref DifySecurityGroup
+      Tags:
+        - Key: Name
+          Value: CTF-Dify-ENI
+
+  # Network Interface for Web Server (to assign static private IP)
+  WebServerNetworkInterface:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      PrivateIpAddress: 10.0.1.10
+      GroupSet:
+        - !Ref WebServerSecurityGroup
+      Tags:
+        - Key: Name
+          Value: CTF-WebServer-ENI
+
+  # Dify Server Instance (Private)
+  DifyInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref DifyAMI
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      NetworkInterfaces:
+        - NetworkInterfaceId: !Ref DifyNetworkInterface
+          DeviceIndex: 0
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+
+          # Ensure Docker is enabled and started
+          systemctl enable docker
+          systemctl start docker
+
+          # Wait for Docker to be ready
+          sleep 10
+
+          # Start Dify containers
+          cd /home/ubuntu/dify/docker
+          docker compose up -d
+
+          # Wait for services to initialize
+          sleep 30
+
+          # Verify all containers are running
+          docker compose ps > /tmp/dify-startup.log
+          echo "Dify startup completed at $(date)" >> /tmp/dify-startup.log
+      Tags:
+        - Key: Name
+          Value: CTF-Dify-Server
+
+  # Web Server Instance (Public)
+  WebServerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref WebServerAMI
+      InstanceType: t3.medium
+      KeyName: !Ref KeyName
+      NetworkInterfaces:
+        - NetworkInterfaceId: !Ref WebServerNetworkInterface
+          DeviceIndex: 0
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 20
+            VolumeType: gp3
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+
+          # Create .env file with production values
+          cat > /opt/cyberdelias/.env << 'EOF'
+          PORT=80
+          NODE_ENV=production
+          DIFY_API_KEY=${DifyAPIKey}
+          DIFY_API_URL=http://10.0.2.10/v1
+          EOF
+
+          # Start the application
+          cd /opt/cyberdelias
+          sudo -u ubuntu pm2 start server.js --name cyberdelias
+          sudo -u ubuntu pm2 save
+
+          # Signal completion
+          echo "Deployment completed at $(date)" > /tmp/cyberdelias-deploy.log
+      Tags:
+        - Key: Name
+          Value: CTF-WebServer
+
+Outputs:
+  WebServerPublicIP:
+    Description: Public IP address of the web server
+    Value: !Ref WebServerEIP
+    Export:
+      Name: !Sub '${AWS::StackName}-WebServerPublicIP'
+
+  WebServerPrivateIP:
+    Description: Private IP address of the web server
+    Value: 10.0.1.10
+    Export:
+      Name: !Sub '${AWS::StackName}-WebServerPrivateIP'
+
+  DifyPrivateIP:
+    Description: Private IP address of Dify server
+    Value: 10.0.2.10
+    Export:
+      Name: !Sub '${AWS::StackName}-DifyPrivateIP'
+
+  DifyURL:
+    Description: URL to access Dify from web server
+    Value: !Sub 'http://10.0.2.10'
+    Export:
+      Name: !Sub '${AWS::StackName}-DifyURL'
+
+  WebServerURL:
+    Description: Public URL of the web server
+    Value: !Sub 'http://${WebServerEIP}'
+    Export:
+      Name: !Sub '${AWS::StackName}-WebServerURL'
+
+  VPCID:
+    Description: VPC ID
+    Value: !Ref VPC
+    Export:
+      Name: !Sub '${AWS::StackName}-VPCID'
