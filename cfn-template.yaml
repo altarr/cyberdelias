@@ -4,8 +4,8 @@ Description: 'CTF Infrastructure - Dify Server (Private) and Public Web Server'
 Parameters:
   DifyAMI:
     Type: String
-    Default: 'ami-082d5af937031e7b1'
-    Description: 'AMI ID for Dify Server'
+    Default: 'ami-042b3204c6a279a9a'
+    Description: 'AMI ID for Dify Server (with configuration preserved)'
 
   WebServerAMI:
     Type: String
