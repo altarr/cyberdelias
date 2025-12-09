@@ -12,6 +12,16 @@ Parameters:
     Default: 'ami-03c142431d1b42776'
     Description: 'AMI ID for Public Web Server (with application baked in)'
 
+  KaliAMI:
+    Type: String
+    Default: 'ami-059a00b72ac368bf5'
+    Description: 'AMI ID for Kali Box (contest machine)'
+
+  GuacamoleAMI:
+    Type: String
+    Default: 'ami-0881e9836b75e4c0e'
+    Description: 'AMI ID for Guacamole Server (remote access gateway)'
+
   DifyAPIKey:
     Type: String
     Default: 'app-Z3TEMkZSNuUjvltxnIgfhC2l'
@@ -218,6 +228,67 @@ Resources:
         - Key: Name
           Value: CTF-Dify-SG
 
+  # Main Security Group (for contest machines)
+  MainSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: CTF-Main-SG
+      GroupDescription: Main security group for contest machines
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 10.0.0.0/16
+          Description: SSH from within VPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: CTF-Main-SG
+
+  # Guacamole Security Group (public facing with full access to main SG)
+  GuacSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: CTF-Guac-SG
+      GroupDescription: Security group for Guacamole server (remote access gateway)
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHLocation
+          Description: SSH access
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP access for Guacamole web interface
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS access for Guacamole web interface
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: CTF-Guac-SG
+
+  # Allow Guacamole to access all ports on Main SG
+  MainSGIngressFromGuac:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref MainSecurityGroup
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref GuacSecurityGroup
+      Description: Full access from Guacamole server
+
   # Elastic IP for Web Server
   WebServerEIP:
     Type: AWS::EC2::EIP
@@ -338,6 +409,59 @@ Resources:
         - Key: Name
           Value: CTF-WebServer
 
+  # Elastic IP for Guacamole
+  GuacamoleEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref GuacamoleInstance
+      Tags:
+        - Key: Name
+          Value: CTF-Guacamole-EIP
+
+  # Kali Box Instance (Private - in Main SG)
+  KaliInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref KaliAMI
+      InstanceType: t3.medium
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
+      SubnetId: !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref MainSecurityGroup
+      PrivateIpAddress: 10.0.2.20
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: CTF-Kali-Box
+
+  # Guacamole Instance (Public - in Guac SG)
+  GuacamoleInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref GuacamoleAMI
+      InstanceType: t3.medium
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref GuacSecurityGroup
+      PrivateIpAddress: 10.0.1.20
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 20
+            VolumeType: gp3
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: CTF-Guacamole
+
 Outputs:
   WebServerPublicIP:
     Description: Public IP address of the web server
@@ -374,3 +498,21 @@ Outputs:
     Value: !Ref VPC
     Export:
       Name: !Sub '${AWS::StackName}-VPCID'
+
+  GuacamolePublicIP:
+    Description: Public IP address of Guacamole server
+    Value: !Ref GuacamoleEIP
+    Export:
+      Name: !Sub '${AWS::StackName}-GuacamolePublicIP'
+
+  GuacamoleURL:
+    Description: Public URL of Guacamole remote access gateway
+    Value: !Sub 'http://${GuacamoleEIP}'
+    Export:
+      Name: !Sub '${AWS::StackName}-GuacamoleURL'
+
+  KaliPrivateIP:
+    Description: Private IP address of Kali box
+    Value: 10.0.2.20
+    Export:
+      Name: !Sub '${AWS::StackName}-KaliPrivateIP'
