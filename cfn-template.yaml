@@ -425,7 +425,7 @@ Resources:
     Type: AWS::EC2::Instance
     Properties:
       ImageId: !Ref KaliAMI
-      InstanceType: t3.medium
+      InstanceType: t3.2xlarge
       KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
       SubnetId: !Ref PrivateSubnet
       SecurityGroupIds:
