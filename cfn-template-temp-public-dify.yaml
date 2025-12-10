@@ -230,6 +230,12 @@ Resources:
             echo "EXTENSION_VERIFY_SIGNATURE=false" >> .env
           fi
 
+          # Add plugin signature verification disable
+          if ! grep -q "PLUGIN_VERIFY_SIGNATURE" .env; then
+            echo "" >> .env
+            echo "PLUGIN_VERIFY_SIGNATURE=false" >> .env
+          fi
+
           # Start Dify containers
           docker compose up -d
           sleep 30
