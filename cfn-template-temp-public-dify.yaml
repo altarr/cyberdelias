@@ -216,20 +216,10 @@ Resources:
           CidrIp: 0.0.0.0/0
           Description: HTTP access from anywhere (TEMPORARY)
         - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          SourceSecurityGroupId: !Ref WebServerSecurityGroup
-          Description: HTTP from Web Server
-        - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
           CidrIp: 0.0.0.0/0
           Description: HTTPS access
-        - IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          SourceSecurityGroupId: !Ref WebServerSecurityGroup
-          Description: HTTPS from Web Server
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
