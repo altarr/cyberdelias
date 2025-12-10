@@ -17,11 +17,6 @@ Parameters:
     Default: 'ami-059a00b72ac368bf5'
     Description: 'AMI ID for Kali Box (contest machine)'
 
-  GuacamoleAMI:
-    Type: String
-    Default: 'ami-0881e9836b75e4c0e'
-    Description: 'AMI ID for Guacamole Server (remote access gateway)'
-
   DifyAPIKey:
     Type: String
     Default: 'app-Z3TEMkZSNuUjvltxnIgfhC2l'
@@ -420,6 +415,122 @@ Resources:
         - Key: Name
           Value: CTF-Guacamole-EIP
 
+  # Guacamole Instance (Public - in Guac SG)
+  GuacamoleInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-0aff18ec83b712f05
+      InstanceType: t3.medium
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref GuacSecurityGroup
+      PrivateIpAddress: 10.0.1.20
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+
+          # Update system
+          apt-get update
+          apt-get upgrade -y
+
+          # Install Docker
+          apt-get install -y ca-certificates curl gnupg
+          install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+          chmod a+r /etc/apt/keyrings/docker.gpg
+
+          echo \
+            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+            $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+            tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+          apt-get update
+          apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+          # Enable and start Docker
+          systemctl enable docker
+          systemctl start docker
+
+          # Create Guacamole directory
+          mkdir -p /opt/guacamole
+          cd /opt/guacamole
+
+          # Create docker-compose.yml
+          cat > docker-compose.yml <<'EOF'
+          version: '3.8'
+
+          services:
+            guacd:
+              image: guacamole/guacd:latest
+              container_name: guacd
+              restart: always
+              networks:
+                - guacamole_network
+
+            postgres:
+              image: postgres:15
+              container_name: postgres_guacamole
+              restart: always
+              environment:
+                POSTGRES_DB: guacamole_db
+                POSTGRES_USER: guacamole_user
+                POSTGRES_PASSWORD: guacamole_pass
+              volumes:
+                - postgres_data:/var/lib/postgresql/data
+                - ./init:/docker-entrypoint-initdb.d:ro
+              networks:
+                - guacamole_network
+
+            guacamole:
+              image: guacamole/guacamole:latest
+              container_name: guacamole
+              restart: always
+              ports:
+                - "80:8080"
+              environment:
+                GUACD_HOSTNAME: guacd
+                POSTGRES_HOSTNAME: postgres
+                POSTGRES_DATABASE: guacamole_db
+                POSTGRES_USER: guacamole_user
+                POSTGRES_PASSWORD: guacamole_pass
+                TOTP_ENABLED: "false"
+              depends_on:
+                - guacd
+                - postgres
+              networks:
+                - guacamole_network
+
+          networks:
+            guacamole_network:
+              driver: bridge
+
+          volumes:
+            postgres_data:
+          EOF
+
+          # Initialize database schema
+          mkdir -p init
+          docker run --rm guacamole/guacamole /opt/guacamole/bin/initdb.sh --postgres > init/initdb.sql
+
+          # Start Guacamole
+          docker compose up -d
+
+          # Wait for services to be ready
+          sleep 30
+
+          echo "Guacamole installation completed at $(date)" > /tmp/guacamole-install.log
+      Tags:
+        - Key: Name
+          Value: CTF-Guacamole
+
   # Kali Box Instance (Private - in Main SG)
   KaliInstance:
     Type: AWS::EC2::Instance
@@ -440,27 +551,6 @@ Resources:
       Tags:
         - Key: Name
           Value: CTF-Kali-Box
-
-  # Guacamole Instance (Public - in Guac SG)
-  GuacamoleInstance:
-    Type: AWS::EC2::Instance
-    Properties:
-      ImageId: !Ref GuacamoleAMI
-      InstanceType: t3.medium
-      KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
-      SubnetId: !Ref PublicSubnet
-      SecurityGroupIds:
-        - !Ref GuacSecurityGroup
-      PrivateIpAddress: 10.0.1.20
-      BlockDeviceMappings:
-        - DeviceName: /dev/sda1
-          Ebs:
-            VolumeSize: 20
-            VolumeType: gp3
-            DeleteOnTermination: true
-      Tags:
-        - Key: Name
-          Value: CTF-Guacamole
 
 Outputs:
   WebServerPublicIP:
