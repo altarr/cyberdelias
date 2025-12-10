@@ -215,7 +215,7 @@ Resources:
       InstanceType: !Ref InstanceType
       KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
       SubnetId: !Ref PublicSubnet
-      PrivateIpAddress: 10.0.2.10
+      PrivateIpAddress: 10.0.1.20
       SecurityGroupIds:
         - !Ref DifySecurityGroup
       BlockDeviceMappings:
@@ -277,7 +277,7 @@ Resources:
           PORT=80
           NODE_ENV=production
           DIFY_API_KEY=${DifyAPIKey}
-          DIFY_API_URL=http://10.0.2.10/v1
+          DIFY_API_URL=http://10.0.1.20/v1
           EOF
 
           # Allow Node.js to bind to privileged ports (port 80)
@@ -315,7 +315,7 @@ Outputs:
 
   DifyPrivateIP:
     Description: Private IP address of Dify server
-    Value: 10.0.2.10
+    Value: 10.0.1.20
     Export:
       Name: !Sub '${AWS::StackName}-DifyPrivateIP'
 
@@ -327,7 +327,7 @@ Outputs:
 
   DifyURL:
     Description: URL to access Dify from web server
-    Value: !Sub 'http://10.0.2.10'
+    Value: !Sub 'http://10.0.1.20'
     Export:
       Name: !Sub '${AWS::StackName}-DifyURL'
 
