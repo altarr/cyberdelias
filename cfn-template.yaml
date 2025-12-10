@@ -4,7 +4,7 @@ Description: 'CTF Infrastructure - Dify Server (Private) and Public Web Server'
 Parameters:
   DifyAMI:
     Type: String
-    Default: 'ami-042b3204c6a279a9a'
+    Default: 'ami-0185d6908886c7896'
     Description: 'AMI ID for Dify Server (with configuration preserved)'
 
   WebServerAMI:
@@ -352,26 +352,8 @@ Resources:
           # Wait for Docker to be ready
           sleep 10
 
-          # Configure Dify environment
-          cd /home/ubuntu/dify/docker
-
-          # Add extension signature verification disable
-          if ! grep -q "EXTENSION_VERIFY_SIGNATURE" .env; then
-            echo "" >> .env
-            echo "EXTENSION_VERIFY_SIGNATURE=false" >> .env
-          fi
-
-          # Add plugin signature verification disable
-          if ! grep -q "PLUGIN_VERIFY_SIGNATURE" .env; then
-            echo "" >> .env
-            echo "PLUGIN_VERIFY_SIGNATURE=false" >> .env
-          fi
-
-          # Disable forced signature verification
-          sed -i 's/FORCE_VERIFYING_SIGNATURE=true/FORCE_VERIFYING_SIGNATURE=false/' .env
-          sed -i 's/ENFORCE_LANGGENIUS_PLUGIN_SIGNATURES=true/ENFORCE_LANGGENIUS_PLUGIN_SIGNATURES=false/' .env
-
           # Start Dify containers
+          cd /home/ubuntu/dify/docker
           docker compose up -d
 
           # Wait for services to initialize
