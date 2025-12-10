@@ -4,7 +4,7 @@ Description: 'TEMPORARY - CTF Infrastructure with PUBLIC Dify for configuration'
 Parameters:
   DifyAMI:
     Type: String
-    Default: 'ami-0fc50ece2a8c8ed3c'
+    Default: 'ami-0974becb9d138db94'
     Description: 'AMI ID for Dify Server (with configuration preserved)'
 
   WebServerAMI:
