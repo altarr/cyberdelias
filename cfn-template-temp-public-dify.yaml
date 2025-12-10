@@ -226,6 +226,7 @@ Resources:
 
           # Add extension signature verification disable
           if ! grep -q "EXTENSION_VERIFY_SIGNATURE" .env; then
+            echo "" >> .env
             echo "EXTENSION_VERIFY_SIGNATURE=false" >> .env
           fi
 
