@@ -9,7 +9,7 @@ Parameters:
 
   WebServerAMI:
     Type: String
-    Default: 'ami-03c142431d1b42776'
+    Default: 'ami-076bb86c2a2b896ab'
     Description: 'AMI ID for Public Web Server (with application baked in)'
 
   KaliAMI:
