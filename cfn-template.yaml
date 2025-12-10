@@ -419,7 +419,7 @@ Resources:
   GuacamoleInstance:
     Type: AWS::EC2::Instance
     Properties:
-      ImageId: ami-0aff18ec83b712f05
+      ImageId: ami-00f46ccd1cbfb363e
       InstanceType: t3.medium
       KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
       SubnetId: !Ref PublicSubnet
