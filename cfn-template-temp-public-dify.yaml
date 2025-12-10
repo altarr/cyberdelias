@@ -113,6 +113,59 @@ Resources:
       SubnetId: !Ref PublicSubnet
       RouteTableId: !Ref PublicRouteTable
 
+  # Private Subnet
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: CTF-Private-Subnet
+
+  # NAT Gateway (for Dify to access internet if needed)
+  NATGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: CTF-NAT-EIP
+
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NATGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet
+      Tags:
+        - Key: Name
+          Value: CTF-NAT-Gateway
+
+  # Private Route Table
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: CTF-Private-RT
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
   # Security Group for Public Web Server
   WebServerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -214,8 +267,8 @@ Resources:
       ImageId: !Ref DifyAMI
       InstanceType: !Ref InstanceType
       KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
-      SubnetId: !Ref PublicSubnet
-      PrivateIpAddress: 10.0.1.20
+      SubnetId: !Ref PrivateSubnet
+      PrivateIpAddress: 10.0.2.10
       SecurityGroupIds:
         - !Ref DifySecurityGroup
       BlockDeviceMappings:
@@ -277,7 +330,7 @@ Resources:
           PORT=80
           NODE_ENV=production
           DIFY_API_KEY=${DifyAPIKey}
-          DIFY_API_URL=http://10.0.1.20/v1
+          DIFY_API_URL=http://10.0.2.10/v1
           EOF
 
           # Allow Node.js to bind to privileged ports (port 80)
@@ -315,7 +368,7 @@ Outputs:
 
   DifyPrivateIP:
     Description: Private IP address of Dify server
-    Value: 10.0.1.20
+    Value: 10.0.2.10
     Export:
       Name: !Sub '${AWS::StackName}-DifyPrivateIP'
 
@@ -327,7 +380,7 @@ Outputs:
 
   DifyURL:
     Description: URL to access Dify from web server
-    Value: !Sub 'http://10.0.1.20'
+    Value: !Sub 'http://10.0.2.10'
     Export:
       Name: !Sub '${AWS::StackName}-DifyURL'
 
