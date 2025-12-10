@@ -220,7 +220,16 @@ Resources:
           systemctl enable docker
           systemctl start docker
           sleep 10
+
+          # Configure Dify environment
           cd /home/ubuntu/dify/docker
+
+          # Add extension signature verification disable
+          if ! grep -q "EXTENSION_VERIFY_SIGNATURE" .env; then
+            echo "EXTENSION_VERIFY_SIGNATURE=false" >> .env
+          fi
+
+          # Start Dify containers
           docker compose up -d
           sleep 30
           docker compose ps > /tmp/dify-startup.log

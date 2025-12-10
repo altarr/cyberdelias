@@ -352,8 +352,15 @@ Resources:
           # Wait for Docker to be ready
           sleep 10
 
-          # Start Dify containers
+          # Configure Dify environment
           cd /home/ubuntu/dify/docker
+
+          # Add extension signature verification disable
+          if ! grep -q "EXTENSION_VERIFY_SIGNATURE" .env; then
+            echo "EXTENSION_VERIFY_SIGNATURE=false" >> .env
+          fi
+
+          # Start Dify containers
           docker compose up -d
 
           # Wait for services to initialize
