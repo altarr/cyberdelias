@@ -337,6 +337,7 @@
     // API endpoint - now points to our backend proxy
     const API_ENDPOINT = '/api/chat';
     let conversationId = '';
+    let userId = 'ctf-user-' + Math.random().toString(36).substring(7);
 
     const chatBubble = document.getElementById('chat-bubble');
     const chatWidget = document.getElementById('chat-widget');
@@ -393,7 +394,8 @@
           },
           body: JSON.stringify({
             message: message,
-            conversationId: conversationId
+            conversationId: conversationId,
+            userId: userId
           })
         });
 

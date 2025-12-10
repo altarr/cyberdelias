@@ -24,14 +24,14 @@ app.get('/api/health', (req, res) => {
 // Chat proxy endpoint
 app.post('/api/chat', async (req, res) => {
   try {
-    const { message, conversationId } = req.body;
+    const { message, conversationId, userId } = req.body;
 
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    // Generate a unique user ID for this session
-    const userId = req.headers['x-user-id'] || 'ctf-user-' + Math.random().toString(36).substring(7);
+    // Use provided userId or generate one (frontend should maintain this)
+    const user = userId || 'ctf-user-' + Math.random().toString(36).substring(7);
 
     // Forward request to Dify
     const response = await fetch(`${DIFY_API_URL}/chat-messages`, {
@@ -45,7 +45,7 @@ app.post('/api/chat', async (req, res) => {
         query: message,
         response_mode: 'blocking',
         conversation_id: conversationId || '',
-        user: userId
+        user: user
       })
     });
 
