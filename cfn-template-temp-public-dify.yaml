@@ -113,59 +113,6 @@ Resources:
       SubnetId: !Ref PublicSubnet
       RouteTableId: !Ref PublicRouteTable
 
-  # Private Subnet (for Dify with static IP 10.0.2.10)
-  PrivateSubnet:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.2.0/24
-      AvailabilityZone: !Select [0, !GetAZs '']
-      MapPublicIpOnLaunch: false
-      Tags:
-        - Key: Name
-          Value: CTF-Private-Subnet
-
-  # NAT Gateway for private subnet internet access
-  NATGatewayEIP:
-    Type: AWS::EC2::EIP
-    DependsOn: AttachGateway
-    Properties:
-      Domain: vpc
-      Tags:
-        - Key: Name
-          Value: CTF-NAT-EIP
-
-  NATGateway:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      AllocationId: !GetAtt NATGatewayEIP.AllocationId
-      SubnetId: !Ref PublicSubnet
-      Tags:
-        - Key: Name
-          Value: CTF-NAT-Gateway
-
-  # Private Route Table
-  PrivateRouteTable:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref VPC
-      Tags:
-        - Key: Name
-          Value: CTF-Private-RT
-
-  PrivateRoute:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NATGateway
-
-  PrivateSubnetRouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PrivateSubnet
-      RouteTableId: !Ref PrivateRouteTable
-
   # Security Group for Public Web Server
   WebServerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -267,7 +214,7 @@ Resources:
       ImageId: !Ref DifyAMI
       InstanceType: !Ref InstanceType
       KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
-      SubnetId: !Ref PrivateSubnet
+      SubnetId: !Ref PublicSubnet
       PrivateIpAddress: 10.0.2.10
       SecurityGroupIds:
         - !Ref DifySecurityGroup
