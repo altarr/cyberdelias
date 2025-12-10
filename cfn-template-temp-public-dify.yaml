@@ -218,8 +218,12 @@ Resources:
         Fn::Base64: !Sub |
           #!/bin/bash
           set -e
+
+          # Ensure Docker is enabled and started
           systemctl enable docker
           systemctl start docker
+
+          # Wait for Docker to be ready
           sleep 10
 
           # Configure Dify environment
@@ -243,7 +247,11 @@ Resources:
 
           # Start Dify containers
           docker compose up -d
+
+          # Wait for services to initialize
           sleep 30
+
+          # Verify all containers are running
           docker compose ps > /tmp/dify-startup.log
           echo "Dify startup completed at $(date)" >> /tmp/dify-startup.log
       Tags:
@@ -258,6 +266,7 @@ Resources:
       InstanceType: t3.medium
       KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
       SubnetId: !Ref PublicSubnet
+      PrivateIpAddress: 10.0.1.10
       SecurityGroupIds:
         - !Ref WebServerSecurityGroup
       BlockDeviceMappings:
@@ -270,18 +279,25 @@ Resources:
         Fn::Base64: !Sub |
           #!/bin/bash
           set -e
+
+          # Create .env file with production values
           cat > /opt/cyberdelias/.env << 'EOF'
           PORT=80
           NODE_ENV=production
           DIFY_API_KEY=${DifyAPIKey}
           DIFY_API_URL=http://10.0.1.20/v1
           EOF
+
+          # Allow Node.js to bind to privileged ports (port 80)
           setcap cap_net_bind_service=+ep $(which node)
+
+          # Start the application
           cd /opt/cyberdelias
           sudo -u ubuntu pm2 start server.js --name cyberdelias
           sudo -u ubuntu pm2 save
+
+          # Signal completion
           echo "Deployment completed at $(date)" > /tmp/cyberdelias-deploy.log
-      PrivateIpAddress: 10.0.1.10
       Tags:
         - Key: Name
           Value: CTF-WebServer
@@ -290,15 +306,47 @@ Outputs:
   WebServerPublicIP:
     Description: Public IP address of the web server
     Value: !Ref WebServerEIP
+    Export:
+      Name: !Sub '${AWS::StackName}-WebServerPublicIP'
+
+  WebServerPrivateIP:
+    Description: Private IP address of the web server
+    Value: 10.0.1.10
+    Export:
+      Name: !Sub '${AWS::StackName}-WebServerPrivateIP'
 
   DifyPublicIP:
     Description: TEMPORARY Public IP address of Dify server
     Value: !Ref DifyEIP
+    Export:
+      Name: !Sub '${AWS::StackName}-DifyPublicIP'
+
+  DifyPrivateIP:
+    Description: Private IP address of Dify server
+    Value: 10.0.1.20
+    Export:
+      Name: !Sub '${AWS::StackName}-DifyPrivateIP'
 
   DifyAccessURL:
     Description: TEMPORARY URL to access Dify web interface
     Value: !Sub 'http://${DifyEIP}'
+    Export:
+      Name: !Sub '${AWS::StackName}-DifyAccessURL'
+
+  DifyURL:
+    Description: URL to access Dify from web server
+    Value: !Sub 'http://10.0.1.20'
+    Export:
+      Name: !Sub '${AWS::StackName}-DifyURL'
 
   WebServerURL:
     Description: Public URL of the web server
     Value: !Sub 'http://${WebServerEIP}'
+    Export:
+      Name: !Sub '${AWS::StackName}-WebServerURL'
+
+  VPCID:
+    Description: VPC ID
+    Value: !Ref VPC
+    Export:
+      Name: !Sub '${AWS::StackName}-VPCID'
