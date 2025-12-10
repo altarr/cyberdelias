@@ -311,7 +311,7 @@ Resources:
       InstanceType: t3.medium
       KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
       SubnetId: !Ref PublicSubnet
-      PrivateIpAddress: 10.0.1.10
+      PrivateIpAddress: 10.0.1.11
       SecurityGroupIds:
         - !Ref WebServerSecurityGroup
       BlockDeviceMappings:
@@ -356,7 +356,7 @@ Outputs:
 
   WebServerPrivateIP:
     Description: Private IP address of the web server
-    Value: 10.0.1.10
+    Value: 10.0.1.11
     Export:
       Name: !Sub '${AWS::StackName}-WebServerPrivateIP'
 
