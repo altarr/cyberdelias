@@ -192,29 +192,29 @@ Resources:
         - Key: Name
           Value: CTF-WebServer-SG
 
-  # Security Group for Dify Server
+  # Security Group for Dify Server (DEV - open for troubleshooting)
   DifySecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupName: CTF-Dify-SG
-      GroupDescription: Security group for Dify server (private)
+      GroupDescription: Security group for Dify server (DEV - open access)
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
-          CidrIp: 10.0.0.0/16
-          Description: SSH from within VPC
+          CidrIp: 0.0.0.0/0
+          Description: SSH access from internet (DEV)
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          SourceSecurityGroupId: !Ref WebServerSecurityGroup
-          Description: HTTP from Web Server
+          CidrIp: 0.0.0.0/0
+          Description: HTTP access from internet (DEV)
         - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
-          SourceSecurityGroupId: !Ref WebServerSecurityGroup
-          Description: HTTPS from Web Server
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS access from internet (DEV)
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
@@ -223,19 +223,22 @@ Resources:
         - Key: Name
           Value: CTF-Dify-SG
 
-  # Main Security Group (for contest machines)
+  # Main Security Group (DEV - open for troubleshooting)
   MainSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupName: CTF-Main-SG
-      GroupDescription: Main security group for contest machines
+      GroupDescription: Main security group for contest machines (DEV - open access)
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
-          CidrIp: 10.0.0.0/16
-          Description: SSH from within VPC
+          CidrIp: 0.0.0.0/0
+          Description: SSH access from internet (DEV)
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: All traffic from internet (DEV)
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
@@ -244,19 +247,19 @@ Resources:
         - Key: Name
           Value: CTF-Main-SG
 
-  # Guacamole Security Group (public facing with full access to main SG)
+  # Guacamole Security Group (open for troubleshooting)
   GuacSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupName: CTF-Guac-SG
-      GroupDescription: Security group for Guacamole server (remote access gateway)
+      GroupDescription: Security group for Guacamole server (DEV - open access)
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
-          CidrIp: !Ref SSHLocation
-          Description: SSH access
+          CidrIp: 0.0.0.0/0
+          Description: SSH access from internet (DEV)
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
@@ -267,6 +270,9 @@ Resources:
           ToPort: 443
           CidrIp: 0.0.0.0/0
           Description: HTTPS access for Guacamole web interface
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: All traffic from internet (DEV)
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
@@ -435,49 +441,47 @@ Resources:
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash
-          set -e
+          set -ex
+          exec > >(tee /var/log/user-data.log)
+          exec 2>&1
 
           # Update system
           apt-get update
-          apt-get upgrade -y
+          DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
 
           # Install Docker
-          apt-get install -y ca-certificates curl gnupg
+          apt-get install -y ca-certificates curl
           install -m 0755 -d /etc/apt/keyrings
-          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-          chmod a+r /etc/apt/keyrings/docker.gpg
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          chmod a+r /etc/apt/keyrings/docker.asc
 
           echo \
-            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
             $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
             tee /etc/apt/sources.list.d/docker.list > /dev/null
 
           apt-get update
           apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-          # Enable and start Docker
+          # Start Docker
           systemctl enable docker
           systemctl start docker
 
           # Create Guacamole directory
-          mkdir -p /opt/guacamole
+          mkdir -p /opt/guacamole/init
           cd /opt/guacamole
 
+          # Initialize database schema
+          docker run --rm guacamole/guacamole /opt/guacamole/bin/initdb.sh --postgresql > init/initdb.sql
+
           # Create docker-compose.yml
-          cat > docker-compose.yml <<'EOF'
+          cat > docker-compose.yml <<'COMPOSE_EOF'
           version: '3.8'
 
           services:
-            guacd:
-              image: guacamole/guacd:latest
-              container_name: guacd
-              restart: always
-              networks:
-                - guacamole_network
-
             postgres:
               image: postgres:15
-              container_name: postgres_guacamole
+              container_name: guac_postgres
               restart: always
               environment:
                 POSTGRES_DB: guacamole_db
@@ -487,7 +491,14 @@ Resources:
                 - postgres_data:/var/lib/postgresql/data
                 - ./init:/docker-entrypoint-initdb.d:ro
               networks:
-                - guacamole_network
+                - guacamole_net
+
+            guacd:
+              image: guacamole/guacd:latest
+              container_name: guacd
+              restart: always
+              networks:
+                - guacamole_net
 
             guacamole:
               image: guacamole/guacamole:latest
@@ -497,36 +508,40 @@ Resources:
                 - "80:8080"
               environment:
                 GUACD_HOSTNAME: guacd
-                POSTGRES_HOSTNAME: postgres
-                POSTGRES_DATABASE: guacamole_db
-                POSTGRES_USER: guacamole_user
-                POSTGRES_PASSWORD: guacamole_pass
-                TOTP_ENABLED: "false"
+                POSTGRESQL_HOSTNAME: postgres
+                POSTGRESQL_DATABASE: guacamole_db
+                POSTGRESQL_USER: guacamole_user
+                POSTGRESQL_PASSWORD: guacamole_pass
               depends_on:
-                - guacd
                 - postgres
+                - guacd
               networks:
-                - guacamole_network
+                - guacamole_net
 
           networks:
-            guacamole_network:
+            guacamole_net:
               driver: bridge
 
           volumes:
             postgres_data:
-          EOF
+          COMPOSE_EOF
 
-          # Initialize database schema
-          mkdir -p init
-          docker run --rm guacamole/guacamole /opt/guacamole/bin/initdb.sh --postgres > init/initdb.sql
-
-          # Start Guacamole
+          # Start services
           docker compose up -d
 
-          # Wait for services to be ready
-          sleep 30
+          # Wait for Guacamole to be ready
+          echo "Waiting for Guacamole to start..."
+          for i in {1..60}; do
+            if curl -s http://localhost/guacamole/ > /dev/null; then
+              echo "Guacamole is ready!"
+              break
+            fi
+            echo "Waiting... ($i/60)"
+            sleep 5
+          done
 
           echo "Guacamole installation completed at $(date)" > /tmp/guacamole-install.log
+          docker compose ps >> /tmp/guacamole-install.log
       Tags:
         - Key: Name
           Value: CTF-Guacamole
