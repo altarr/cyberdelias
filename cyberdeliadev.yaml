@@ -1,0 +1,608 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CTF Infrastructure - Dify Server (Private) and Public Web Server'
+
+Parameters:
+  DifyAMI:
+    Type: String
+    Default: 'ami-0974becb9d138db94'
+    Description: 'AMI ID for Dify Server (with configuration preserved)'
+
+  WebServerAMI:
+    Type: String
+    Default: 'ami-076bb86c2a2b896ab'
+    Description: 'AMI ID for Public Web Server (with application baked in)'
+
+  KaliAMI:
+    Type: String
+    Default: 'ami-059a00b72ac368bf5'
+    Description: 'AMI ID for Kali Box (contest machine)'
+
+  DifyAPIKey:
+    Type: String
+    Default: 'app-Z3TEMkZSNuUjvltxnIgfhC2l'
+    Description: 'Dify API Key'
+    NoEcho: true
+
+  KeyName:
+    Type: String
+    Default: ''
+    Description: 'Optional: EC2 Key Pair for SSH access (leave empty if not needed)'
+
+  SSHLocation:
+    Type: String
+    Default: '0.0.0.0/0'
+    Description: 'IP address range that can SSH to the instances'
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+
+  InstanceType:
+    Type: String
+    Default: 't3.large'
+    Description: 'EC2 instance type'
+    AllowedValues:
+      - t3.medium
+      - t3.large
+      - t3.xlarge
+      - t3.2xlarge
+
+Conditions:
+  HasKeyName: !Not [!Equals [!Ref KeyName, '']]
+
+Resources:
+  # VPC
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: CTF-VPC
+
+  # Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: CTF-IGW
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Public Subnet
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: CTF-Public-Subnet
+
+  # Private Subnet
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: CTF-Private-Subnet
+
+  # Public Route Table
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: CTF-Public-RT
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  # NAT Gateway (for Dify to access internet if needed)
+  NATGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: CTF-NAT-EIP
+
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NATGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet
+      Tags:
+        - Key: Name
+          Value: CTF-NAT-Gateway
+
+  # Private Route Table
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: CTF-Private-RT
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Security Group for Public Web Server
+  WebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: CTF-WebServer-SG
+      GroupDescription: Security group for public web server
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHLocation
+          Description: SSH access
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP access
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS access
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: CTF-WebServer-SG
+
+  # Security Group for Dify Server
+  DifySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: CTF-Dify-SG
+      GroupDescription: Security group for Dify server (private)
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 10.0.0.0/16
+          Description: SSH from within VPC
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref WebServerSecurityGroup
+          Description: HTTP from Web Server
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref WebServerSecurityGroup
+          Description: HTTPS from Web Server
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: CTF-Dify-SG
+
+  # Main Security Group (for contest machines)
+  MainSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: CTF-Main-SG
+      GroupDescription: Main security group for contest machines
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 10.0.0.0/16
+          Description: SSH from within VPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: CTF-Main-SG
+
+  # Guacamole Security Group (public facing with full access to main SG)
+  GuacSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: CTF-Guac-SG
+      GroupDescription: Security group for Guacamole server (remote access gateway)
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHLocation
+          Description: SSH access
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP access for Guacamole web interface
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS access for Guacamole web interface
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: CTF-Guac-SG
+
+  # Allow Guacamole to access all ports on Main SG
+  MainSGIngressFromGuac:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref MainSecurityGroup
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref GuacSecurityGroup
+      Description: Full access from Guacamole server
+
+  # Elastic IP for Web Server
+  WebServerEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref WebServerInstance
+      Tags:
+        - Key: Name
+          Value: CTF-WebServer-EIP
+
+  # Network Interface for Dify (to assign static private IP)
+  DifyNetworkInterface:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      PrivateIpAddress: 10.0.2.10
+      GroupSet:
+        - !Ref DifySecurityGroup
+      Tags:
+        - Key: Name
+          Value: CTF-Dify-ENI
+
+  # Network Interface for Web Server (to assign static private IP)
+  WebServerNetworkInterface:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      PrivateIpAddress: 10.0.1.10
+      GroupSet:
+        - !Ref WebServerSecurityGroup
+      Tags:
+        - Key: Name
+          Value: CTF-WebServer-ENI
+
+  # Dify Server Instance (Private)
+  DifyInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref DifyAMI
+      InstanceType: !Ref InstanceType
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
+      NetworkInterfaces:
+        - NetworkInterfaceId: !Ref DifyNetworkInterface
+          DeviceIndex: 0
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 50
+            VolumeType: gp3
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+
+          # Ensure Docker is enabled and started
+          systemctl enable docker
+          systemctl start docker
+
+          # Wait for Docker to be ready
+          sleep 10
+
+          # Start Dify containers
+          cd /home/ubuntu/dify/docker
+          docker compose up -d
+
+          # Wait for services to initialize
+          sleep 30
+
+          # Verify all containers are running
+          docker compose ps > /tmp/dify-startup.log
+          echo "Dify startup completed at $(date)" >> /tmp/dify-startup.log
+      Tags:
+        - Key: Name
+          Value: CTF-Dify-Server
+
+  # Web Server Instance (Public)
+  WebServerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref WebServerAMI
+      InstanceType: t3.medium
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
+      NetworkInterfaces:
+        - NetworkInterfaceId: !Ref WebServerNetworkInterface
+          DeviceIndex: 0
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 20
+            VolumeType: gp3
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+
+          # Create .env file with production values
+          cat > /opt/cyberdelias/.env << 'EOF'
+          PORT=80
+          NODE_ENV=production
+          DIFY_API_KEY=${DifyAPIKey}
+          DIFY_API_URL=http://10.0.2.10/v1
+          EOF
+
+          # Allow Node.js to bind to privileged ports (port 80)
+          setcap cap_net_bind_service=+ep $(which node)
+
+          # Start the application
+          cd /opt/cyberdelias
+          sudo -u ubuntu pm2 start server.js --name cyberdelias
+          sudo -u ubuntu pm2 save
+
+          # Signal completion
+          echo "Deployment completed at $(date)" > /tmp/cyberdelias-deploy.log
+      Tags:
+        - Key: Name
+          Value: CTF-WebServer
+
+  # Elastic IP for Guacamole
+  GuacamoleEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref GuacamoleInstance
+      Tags:
+        - Key: Name
+          Value: CTF-Guacamole-EIP
+
+  # Guacamole Instance (Public - in Guac SG)
+  GuacamoleInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-00f46ccd1cbfb363e
+      InstanceType: t3.medium
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref GuacSecurityGroup
+      PrivateIpAddress: 10.0.1.20
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+
+          # Update system
+          apt-get update
+          apt-get upgrade -y
+
+          # Install Docker
+          apt-get install -y ca-certificates curl gnupg
+          install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+          chmod a+r /etc/apt/keyrings/docker.gpg
+
+          echo \
+            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+            $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+            tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+          apt-get update
+          apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+          # Enable and start Docker
+          systemctl enable docker
+          systemctl start docker
+
+          # Create Guacamole directory
+          mkdir -p /opt/guacamole
+          cd /opt/guacamole
+
+          # Create docker-compose.yml
+          cat > docker-compose.yml <<'EOF'
+          version: '3.8'
+
+          services:
+            guacd:
+              image: guacamole/guacd:latest
+              container_name: guacd
+              restart: always
+              networks:
+                - guacamole_network
+
+            postgres:
+              image: postgres:15
+              container_name: postgres_guacamole
+              restart: always
+              environment:
+                POSTGRES_DB: guacamole_db
+                POSTGRES_USER: guacamole_user
+                POSTGRES_PASSWORD: guacamole_pass
+              volumes:
+                - postgres_data:/var/lib/postgresql/data
+                - ./init:/docker-entrypoint-initdb.d:ro
+              networks:
+                - guacamole_network
+
+            guacamole:
+              image: guacamole/guacamole:latest
+              container_name: guacamole
+              restart: always
+              ports:
+                - "80:8080"
+              environment:
+                GUACD_HOSTNAME: guacd
+                POSTGRES_HOSTNAME: postgres
+                POSTGRES_DATABASE: guacamole_db
+                POSTGRES_USER: guacamole_user
+                POSTGRES_PASSWORD: guacamole_pass
+                TOTP_ENABLED: "false"
+              depends_on:
+                - guacd
+                - postgres
+              networks:
+                - guacamole_network
+
+          networks:
+            guacamole_network:
+              driver: bridge
+
+          volumes:
+            postgres_data:
+          EOF
+
+          # Initialize database schema
+          mkdir -p init
+          docker run --rm guacamole/guacamole /opt/guacamole/bin/initdb.sh --postgres > init/initdb.sql
+
+          # Start Guacamole
+          docker compose up -d
+
+          # Wait for services to be ready
+          sleep 30
+
+          echo "Guacamole installation completed at $(date)" > /tmp/guacamole-install.log
+      Tags:
+        - Key: Name
+          Value: CTF-Guacamole
+
+  # Kali Box Instance (Private - in Guac SG)
+  KaliInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref KaliAMI
+      InstanceType: t3.2xlarge
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
+      SubnetId: !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref GuacSecurityGroup
+      PrivateIpAddress: 10.0.2.20
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: CTF-Kali-Box
+
+Outputs:
+  WebServerPublicIP:
+    Description: Public IP address of the web server
+    Value: !Ref WebServerEIP
+    Export:
+      Name: !Sub '${AWS::StackName}-WebServerPublicIP'
+
+  WebServerPrivateIP:
+    Description: Private IP address of the web server
+    Value: 10.0.1.10
+    Export:
+      Name: !Sub '${AWS::StackName}-WebServerPrivateIP'
+
+  DifyPrivateIP:
+    Description: Private IP address of Dify server
+    Value: 10.0.2.10
+    Export:
+      Name: !Sub '${AWS::StackName}-DifyPrivateIP'
+
+  DifyURL:
+    Description: URL to access Dify from web server
+    Value: !Sub 'http://10.0.2.10'
+    Export:
+      Name: !Sub '${AWS::StackName}-DifyURL'
+
+  WebServerURL:
+    Description: Public URL of the web server
+    Value: !Sub 'http://${WebServerEIP}'
+    Export:
+      Name: !Sub '${AWS::StackName}-WebServerURL'
+
+  VPCID:
+    Description: VPC ID
+    Value: !Ref VPC
+    Export:
+      Name: !Sub '${AWS::StackName}-VPCID'
+
+  GuacamolePublicIP:
+    Description: Public IP address of Guacamole server
+    Value: !Ref GuacamoleEIP
+    Export:
+      Name: !Sub '${AWS::StackName}-GuacamolePublicIP'
+
+  GuacamoleURL:
+    Description: Public URL of Guacamole remote access gateway
+    Value: !Sub 'http://${GuacamoleEIP}'
+    Export:
+      Name: !Sub '${AWS::StackName}-GuacamoleURL'
+
+  KaliPrivateIP:
+    Description: Private IP address of Kali box
+    Value: 10.0.2.20
+    Export:
+      Name: !Sub '${AWS::StackName}-KaliPrivateIP'
