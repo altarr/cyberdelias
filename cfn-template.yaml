@@ -531,7 +531,7 @@ Resources:
         - Key: Name
           Value: CTF-Guacamole
 
-  # Kali Box Instance (Private - in Main SG)
+  # Kali Box Instance (Private - in Guac SG)
   KaliInstance:
     Type: AWS::EC2::Instance
     Properties:
@@ -540,7 +540,7 @@ Resources:
       KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
       SubnetId: !Ref PrivateSubnet
       SecurityGroupIds:
-        - !Ref MainSecurityGroup
+        - !Ref GuacSecurityGroup
       PrivateIpAddress: 10.0.2.20
       BlockDeviceMappings:
         - DeviceName: /dev/sda1
