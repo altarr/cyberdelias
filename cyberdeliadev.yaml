@@ -546,6 +546,113 @@ Resources:
         - Key: Name
           Value: CTF-Guacamole
 
+  # Vulnerable Log4j Server (Private - in Main SG)
+  Log4jVulnServer:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-00f46ccd1cbfb363e
+      InstanceType: t3.medium
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
+      SubnetId: !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref MainSecurityGroup
+      PrivateIpAddress: 10.0.2.30
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 20
+            VolumeType: gp3
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -ex
+          exec > >(tee /var/log/user-data.log)
+          exec 2>&1
+
+          # Update system
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
+
+          # Install Java 8 (required for vulnerable Log4j)
+          apt-get install -y openjdk-8-jdk wget unzip
+
+          # Create app directory
+          mkdir -p /opt/log4j-vuln
+          cd /opt/log4j-vuln
+
+          # Download vulnerable Log4j version (2.14.1)
+          wget https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-core/2.14.1/log4j-core-2.14.1.jar
+          wget https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-api/2.14.1/log4j-api-2.14.1.jar
+
+          # Create a simple vulnerable web application
+          cat > VulnApp.java <<'JAVA_EOF'
+          import com.sun.net.httpserver.HttpServer;
+          import com.sun.net.httpserver.HttpHandler;
+          import com.sun.net.httpserver.HttpExchange;
+          import org.apache.logging.log4j.LogManager;
+          import org.apache.logging.log4j.Logger;
+          import java.io.IOException;
+          import java.io.OutputStream;
+          import java.net.InetSocketAddress;
+
+          public class VulnApp {
+              private static final Logger logger = LogManager.getLogger(VulnApp.class);
+
+              public static void main(String[] args) throws IOException {
+                  HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
+                  server.createContext("/", new RequestHandler());
+                  server.setExecutor(null);
+                  System.out.println("Server started on port 8080");
+                  server.start();
+              }
+
+              static class RequestHandler implements HttpHandler {
+                  @Override
+                  public void handle(HttpExchange exchange) throws IOException {
+                      String userAgent = exchange.getRequestHeaders().getFirst("User-Agent");
+                      logger.info("Request from User-Agent: " + userAgent);
+
+                      String response = "Logged your request!";
+                      exchange.sendResponseHeaders(200, response.length());
+                      OutputStream os = exchange.getResponseBody();
+                      os.write(response.getBytes());
+                      os.close();
+                  }
+              }
+          }
+          JAVA_EOF
+
+          # Compile the application
+          javac -cp "log4j-core-2.14.1.jar:log4j-api-2.14.1.jar" VulnApp.java
+
+          # Create systemd service
+          cat > /etc/systemd/system/log4j-vuln.service <<'SERVICE_EOF'
+          [Unit]
+          Description=Vulnerable Log4j Application
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=root
+          WorkingDirectory=/opt/log4j-vuln
+          ExecStart=/usr/bin/java -cp "/opt/log4j-vuln:log4j-core-2.14.1.jar:log4j-api-2.14.1.jar" VulnApp
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+          SERVICE_EOF
+
+          # Start the service
+          systemctl daemon-reload
+          systemctl enable log4j-vuln
+          systemctl start log4j-vuln
+
+          echo "Log4j vulnerable server setup completed at $(date)" > /tmp/log4j-setup.log
+      Tags:
+        - Key: Name
+          Value: CTF-Log4j-Vuln-Server
+
   # Kali Box Instance (Private - in Guac SG)
   KaliInstance:
     Type: AWS::EC2::Instance
@@ -621,3 +728,15 @@ Outputs:
     Value: 10.0.2.20
     Export:
       Name: !Sub '${AWS::StackName}-KaliPrivateIP'
+
+  Log4jVulnServerPrivateIP:
+    Description: Private IP address of vulnerable Log4j server
+    Value: 10.0.2.30
+    Export:
+      Name: !Sub '${AWS::StackName}-Log4jVulnServerPrivateIP'
+
+  Log4jVulnServerURL:
+    Description: URL to access vulnerable Log4j server (internal only)
+    Value: http://10.0.2.30:8080
+    Export:
+      Name: !Sub '${AWS::StackName}-Log4jVulnServerURL'
